@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Context Engine - Intelligent Search</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 3rem;
+            color: white;
+        }
+
+        .header h1 {
+            font-size: 3rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .header p {
+            font-size: 1.2rem;
+            opacity: 0.9;
+            font-weight: 300;
+        }
+
+        .search-container {
+            background: white;
+            border-radius: 16px;
+            padding: 2rem;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            margin-bottom: 2rem;
+        }
+
+        .search-form {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .search-input {
+            flex: 1;
+            padding: 1rem 1.5rem;
+            border: 2px solid #e1e5e9;
+            border-radius: 12px;
+            font-size: 1.1rem;
+            transition: all 0.3s ease;
+            background: #f8f9fa;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #667eea;
+            background: white;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .search-button {
+            padding: 1rem 2rem;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .search-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .search-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .context-input {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            border: 1px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            background: #f8f9fa;
+        }
+
+        .context-input:focus {
+            outline: none;
+            border-color: #667eea;
+            background: white;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 0.5rem;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        .results-container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            display: none;
+        }
+
+        .results-header {
+            background: #f8f9fa;
+            padding: 1.5rem;
+            border-bottom: 1px solid #e1e5e9;
+        }
+
+        .results-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 0.5rem;
+        }
+
+        .results-meta {
+            color: #666;
+            font-size: 0.9rem;
+        }
+
+        .results-list {
+            padding: 0;
+        }
+
+        .result-item {
+            padding: 1.5rem;
+            border-bottom: 1px solid #f1f3f4;
+            transition: background 0.2s ease;
+        }
+
+        .result-item:hover {
+            background: #f8f9fa;
+        }
+
+        .result-item:last-child {
+            border-bottom: none;
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: between;
+            align-items: flex-start;
+            margin-bottom: 0.75rem;
+            gap: 1rem;
+        }
+
+        .result-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 0.25rem;
+            flex: 1;
+            line-height: 1.4;
+        }
+
+        .result-source {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            flex-shrink: 0;
+        }
+
+        .source-gmail {
+            background: #fef3f2;
+            color: #b91c1c;
+        }
+
+        .source-notion {
+            background: #f0f9ff;
+            color: #1e40af;
+        }
+
+        .result-score {
+            color: #666;
+            font-size: 0.85rem;
+            margin-left: 0.5rem;
+        }
+
+        .result-content {
+            color: #555;
+            line-height: 1.6;
+            margin-bottom: 0.75rem;
+        }
+
+        .result-doc-id {
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 0.75rem;
+            color: #888;
+            background: #f8f9fa;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            display: inline-block;
+        }
+
+        .stats-container {
+            background: white;
+            border-radius: 16px;
+            padding: 1.5rem;
+            margin-top: 1rem;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.05);
+            display: none;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #667eea;
+        }
+
+        .stat-label {
+            font-size: 0.85rem;
+            color: #666;
+            margin-top: 0.25rem;
+        }
+
+        .error-message {
+            background: #fef2f2;
+            color: #b91c1c;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-top: 1rem;
+            display: none;
+        }
+
+        .suggestions-container {
+            background: white;
+            border-radius: 16px;
+            padding: 1.5rem;
+            margin-top: 1rem;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.05);
+            display: none;
+        }
+
+        .suggestions-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: #333;
+        }
+
+        .suggestion-item {
+            background: #f8f9fa;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 0.75rem;
+            border-left: 4px solid #667eea;
+        }
+
+        .suggestion-text {
+            color: #555;
+            line-height: 1.5;
+            margin-bottom: 0.5rem;
+        }
+
+        .suggestion-score {
+            font-size: 0.85rem;
+            color: #666;
+        }
+
+        @media (max-width: 768px) {
+            .search-form {
+                flex-direction: column;
+            }
+
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .container {
+                padding: 1rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Context Engine</h1>
+            <p>Intelligent search across your digital knowledge</p>
+        </div>
+
+        <div class="search-container">
+            <form class="search-form" id="searchForm">
+                <input type="text" class="search-input" id="searchInput"
+                    placeholder="Search your emails, notes, and documents..." required>
+                <button type="submit" class="search-button" id="searchButton">
+                    Search
+                </button>
+            </form>
+            <input type="text" class="context-input" id="contextInput"
+                placeholder="Context hint (optional): e.g., 'job search', 'technical discussion', 'project planning'">
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            Searching your knowledge base...
+        </div>
+
+        <div class="error-message" id="errorMessage"></div>
+
+        <div class="results-container" id="resultsContainer">
+            <div class="results-header">
+                <div class="results-title" id="resultsTitle">Search Results</div>
+                <div class="results-meta" id="resultsMeta"></div>
+            </div>
+            <div class="results-list" id="resultsList"></div>
+        </div>
+
+        <div class="suggestions-container" id="suggestionsContainer">
+            <div class="suggestions-title">AI-Generated Suggestions</div>
+            <div id="suggestionsList"></div>
+        </div>
+
+        <div class="stats-container" id="statsContainer">
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <div class="stat-value" id="statTotalTime">--</div>
+                    <div class="stat-label">Total Time (ms)</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="statEmbeddingTime">--</div>
+                    <div class="stat-label">Embedding (ms)</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="statSearchTime">--</div>
+                    <div class="stat-label">Search (ms)</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="statChunksRetrieved">--</div>
+                    <div class="stat-label">Chunks Retrieved</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE_URL = 'http://localhost:8000';
+
+        const searchForm = document.getElementById('searchForm');
+        const searchInput = document.getElementById('searchInput');
+        const contextInput = document.getElementById('contextInput');
+        const searchButton = document.getElementById('searchButton');
+        const loading = document.getElementById('loading');
+        const errorMessage = document.getElementById('errorMessage');
+        const resultsContainer = document.getElementById('resultsContainer');
+        const suggestionsContainer = document.getElementById('suggestionsContainer');
+        const statsContainer = document.getElementById('statsContainer');
+
+        searchForm.addEventListener('submit', handleSearch);
+
+        async function handleSearch(event) {
+            event.preventDefault();
+
+            const query = searchInput.value.trim();
+            const context = contextInput.value.trim();
+
+            if (!query) return;
+
+            // Show loading state
+            setLoadingState(true);
+            hideResults();
+            hideError();
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/suggest`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        text: query,
+                        context: context || undefined
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                displayResults(data, query);
+
+            } catch (error) {
+                console.error('Search error:', error);
+                showError(`Search failed: ${error.message}`);
+            } finally {
+                setLoadingState(false);
+            }
+        }
+
+        function setLoadingState(isLoading) {
+            loading.style.display = isLoading ? 'block' : 'none';
+            searchButton.disabled = isLoading;
+            searchButton.textContent = isLoading ? 'Searching...' : 'Search';
+        }
+
+        function hideResults() {
+            resultsContainer.style.display = 'none';
+            suggestionsContainer.style.display = 'none';
+            statsContainer.style.display = 'none';
+        }
+
+        function hideError() {
+            errorMessage.style.display = 'none';
+        }
+
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.style.display = 'block';
+        }
+
+        function displayResults(data, query) {
+            const { sources = [], suggestions = [], stats = {} } = data;
+
+            // Display search results
+            if (sources.length > 0) {
+                displaySources(sources, query);
+                resultsContainer.style.display = 'block';
+            }
+
+            // Display AI suggestions
+            if (suggestions.length > 0) {
+                displaySuggestions(suggestions);
+                suggestionsContainer.style.display = 'block';
+            }
+
+            // Display performance stats
+            displayStats(stats);
+            statsContainer.style.display = 'block';
+        }
+
+        function displaySources(sources, query) {
+            const resultsTitle = document.getElementById('resultsTitle');
+            const resultsMeta = document.getElementById('resultsMeta');
+            const resultsList = document.getElementById('resultsList');
+
+            resultsTitle.textContent = `Search Results for "${query}"`;
+            resultsMeta.textContent = `Found ${sources.length} relevant results`;
+
+            resultsList.innerHTML = sources.map(source => {
+                const sourceType = inferSourceType(source);
+                const similarityScore = (source.similarity * 100).toFixed(1);
+
+                return `
+                    <div class="result-item">
+                        <div class="result-header">
+                            <div class="result-title">${escapeHtml(source.title)}</div>
+                            <div class="result-source source-${sourceType}">
+                                ${sourceType.toUpperCase()}
+                                <span class="result-score">${similarityScore}%</span>
+                            </div>
+                        </div>
+                        <div class="result-content">${escapeHtml(source.chunk_text)}</div>
+                        <div class="result-doc-id">ID: ${source.doc_id}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function displaySuggestions(suggestions) {
+            const suggestionsList = document.getElementById('suggestionsList');
+
+            suggestionsList.innerHTML = suggestions.map(suggestion => `
+                <div class="suggestion-item">
+                    <div class="suggestion-text">${escapeHtml(suggestion.text)}</div>
+                    <div class="suggestion-score">Confidence: ${(suggestion.score * 100).toFixed(0)}% • ${suggestion.reasoning}</div>
+                </div>
+            `).join('');
+        }
+
+        function displayStats(stats) {
+            document.getElementById('statTotalTime').textContent = stats.total_time_ms || '--';
+            document.getElementById('statEmbeddingTime').textContent = stats.embedding_time_ms || '--';
+            document.getElementById('statSearchTime').textContent = stats.search_time_ms || '--';
+            document.getElementById('statChunksRetrieved').textContent = stats.chunks_retrieved || '--';
+        }
+
+        function inferSourceType(source) {
+            return source.source || 'unknown';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Focus search input on page load
+        window.addEventListener('load', () => {
+            searchInput.focus();
+        });
+
+        // Handle Enter key in context input
+        contextInput.addEventListener('keypress', (event) => {
+            if (event.key === 'Enter') {
+                searchForm.dispatchEvent(new Event('submit'));
+            }
+        });
+    </script>
+</body>
+
+</html>

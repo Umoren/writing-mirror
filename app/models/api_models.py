@@ -19,7 +19,7 @@ class Source(BaseModel):
     title: str = Field(..., description="Document title")
     similarity: float = Field(..., ge=0, le=1, description="Similarity score")
     chunk_text: Optional[str] = Field(None, description="Relevant chunk text")
-
+    source: str = Field(..., description="Source type (gmail, notion, etc.)")
 
 class Suggestion(BaseModel):
     """Individual suggestion with metadata"""

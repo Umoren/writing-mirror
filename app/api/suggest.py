@@ -1,295 +1,360 @@
-"""
-Enhanced Suggest API with hybrid search and context-aware suggestions
-"""
+from fastapi import APIRouter, HTTPException
+from typing import List
 import time
-from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
 import logging
+import os
+from datetime import datetime
+from dotenv import load_dotenv
 
+# Load environment variables
+load_dotenv()
+
+from ..models.api_models import (
+    SuggestRequest,
+    SuggestResponse,
+    Suggestion,
+    PerformanceStats,
+    HealthResponse,
+    ErrorResponse,
+    Source
+)
 from ..services.vector_service import VectorService, init_vector_db
 from ..services.embedding_service import EmbeddingService
-from ..services.enhanced_text_processor import AdvancedTextProcessor, SemanticChunker
-from ..services.hybrid_search_engine import HybridSearchEngine, ContextAwareScoring
-from ..services.context_suggestion_engine import ContextSuggestionEngine
 
-# Setup logging
 logger = logging.getLogger(__name__)
-
-# Initialize services
-qdrant_client = init_vector_db()
-vector_service = VectorService(client=qdrant_client)
-embedding_service = EmbeddingService()
-hybrid_search = HybridSearchEngine(vector_service, embedding_service)
-suggestion_engine = ContextSuggestionEngine()
-context_scoring = ContextAwareScoring()
-
 router = APIRouter()
 
-class SuggestRequest(BaseModel):
-    text: str
-    context: str = ""
-    suggestion_type: str = "continuation"  # continuation, completion, enhancement
-    source_filter: Optional[str] = None  # gmail, notion, or None for all
-    content_type_hint: Optional[str] = None  # job_related, technical, personal, etc.
-    max_results: int = 3
+# Initialize vector services
+def get_vector_services():
+    """Initialize and return vector services"""
+    qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
+    collection_name = os.getenv("QDRANT_COLLECTION", "writing_samples")
 
-class SuggestResponse(BaseModel):
-    trace_id: str
-    suggestions: List[dict]
-    sources: List[dict]
-    stats: dict
-    timestamp: str
-    search_strategy: dict
+    # Initialize Qdrant client
+    qdrant_client = init_vector_db(url=qdrant_url, collection_name=collection_name)
+    vector_service = VectorService(client=qdrant_client, collection_name=collection_name)
+    embedding_service = EmbeddingService()
 
-@router.get("/health")
-async def health_check():
-    """Enhanced health check with service status"""
-    try:
-        # Test vector database connection
-        collection_info = await vector_service.get_collection_info()
+    return vector_service, embedding_service
 
-        # Test embedding service
-        test_embedding = embedding_service.generate_embedding("test")
+# Initialize services at module level
+try:
+    vector_service, embedding_service = get_vector_services()
+    logger.info("Vector services initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize vector services: {e}")
+    vector_service = None
+    embedding_service = None
 
-        return {
-            "status": "healthy",
-            "services": {
-                "vector_database": {
-                    "status": "healthy",
-                    "vectors_count": collection_info.get("points_count", 0)
-                },
-                "embedding_service": {
-                    "status": "healthy",
-                    "vector_dimension": len(test_embedding)
-                },
-                "hybrid_search": {
-                    "status": "healthy"
-                },
-                "suggestion_engine": {
-                    "status": "healthy"
-                }
-            },
-            "timestamp": time.time()
-        }
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Service unhealthy: {str(e)}")
 
 @router.post("/suggest", response_model=SuggestResponse)
-async def suggest_text(request: SuggestRequest):
-    """Enhanced suggest endpoint with hybrid search and context-aware suggestions"""
-
-    # Generate trace ID for debugging
-    trace_id = f"suggest_{int(time.time() * 1000)}"
+async def suggest(request: SuggestRequest) -> SuggestResponse:
+    """Generate writing suggestions based on user input using vector search"""
     start_time = time.time()
+    trace_id = f"suggest_{int(time.time() * 1000)}"
     
     try:
-        logger.info(f"[{trace_id}] Processing suggestion request")
+        logger.info(f"[{trace_id}] Processing suggestion request: {request.text[:50]}...")
         
-        # Validate input
-        if not request.text.strip():
-            raise HTTPException(status_code=400, detail="Text cannot be empty")
+        if not vector_service or not embedding_service:
+            raise HTTPException(
+                status_code=503,
+                detail="Vector services not available"
+            )
         
-        # Step 1: Hybrid Search with multiple signals
+        # Step 1: Generate query embedding
+        embedding_start = time.time()
+        query_vector = embedding_service.generate_embedding(request.text)
+        embedding_time_ms = int((time.time() - embedding_start) * 1000)
+
+        # Step 2: Search for similar content
         search_start = time.time()
-
-        search_results = await hybrid_search.search(
-            query=request.text,
-            context=request.context,
-            top_k=min(request.max_results * 3, 15),  # Get more for better variety
-            source_filter=request.source_filter,
-            content_type_hint=request.content_type_hint
+        search_results = await vector_service.search_similar(
+            query_vector=query_vector,
+            top_k=10,  # Get more results for better variety
+            score_threshold=0.3  # Lower threshold for more results
         )
+        search_time_ms = int((time.time() - search_start) * 1000)
 
-        search_time = (time.time() - search_start) * 1000
+        logger.info(f"[{trace_id}] Found {len(search_results)} similar chunks")
 
-        # Step 2: Apply context-aware scoring adjustments
-        if search_results:
-            for result in search_results:
-                # Adjust for query specificity
-                result.final_score = context_scoring.adjust_for_query_specificity(
-                    result.final_score, request.text
-                )
-
-                # Boost exact matches
-                result.final_score = context_scoring.boost_exact_matches(
-                    result.final_score, request.text, result.content
-                )
-
-            # Re-sort after adjustments
-            search_results.sort(key=lambda x: x.final_score, reverse=True)
-
-            # Apply source diversification
-            search_results = context_scoring.diversify_sources(search_results)
-
-        # Step 3: Generate context-aware suggestions
-        suggestion_start = time.time()
-
-        suggestions = suggestion_engine.generate_suggestions(
-            current_text=request.text,
-            context=request.context,
+        # Step 3: Generate suggestions based on retrieved content
+        generation_start = time.time()
+        suggestions = _generate_suggestions_from_chunks(
+            user_text=request.text,
             search_results=search_results,
-            suggestion_type=request.suggestion_type
+            task=request.task,
+            num_suggestions=request.num_suggestions,
+            max_length=request.max_length
         )
-        
-        suggestion_time = (time.time() - suggestion_start) * 1000
-        
-        # Step 4: Format response
-        formatted_suggestions = [
-            {
-                "text": suggestion.text,
-                "score": suggestion.confidence,
-                "reasoning": suggestion.reasoning,
-                "type": suggestion.suggestion_type,
-                "source_context": suggestion.source_context
-            }
-            for suggestion in suggestions[:request.max_results]
-        ]
-        
-        formatted_sources = [
-            {
-                "doc_id": result.doc_id,
-                "title": result.title,
-                "similarity": result.vector_score,
-                "final_score": result.final_score,
-                "source": result.source,
-                "ranking_factors": result.ranking_factors,
-                "chunk_text": result.content[:200] + "..." if len(result.content) > 200 else result.content
-            }
-            for result in search_results[:5]  # Show top 5 sources
-        ]
-        
-        total_time = (time.time() - start_time) * 1000
+        generation_time_ms = int((time.time() - generation_start) * 1000)
 
-        # Step 5: Build comprehensive stats
-        stats = {
-            "total_time_ms": round(total_time, 2),
-            "search_time_ms": round(search_time, 2),
-            "suggestion_time_ms": round(suggestion_time, 2),
-            "chunks_retrieved": len(search_results),
-            "suggestions_generated": len(suggestions),
-            "sources_analyzed": len(set(r.source for r in search_results)),
-            "avg_similarity_score": round(
-                sum(r.vector_score for r in search_results) / len(search_results), 3
-            ) if search_results else 0,
-            "avg_final_score": round(
-                sum(r.final_score for r in search_results) / len(search_results), 3
-            ) if search_results else 0
-        }
+        # Step 4: Format sources
+        sources = _format_sources(search_results[:5])  # Top 5 sources
 
-        # Search strategy information
-        search_strategy = {
-            "hybrid_search": True,
-            "context_aware_scoring": True,
-            "source_diversification": True,
-            "temporal_weighting": True,
-            "content_type_matching": bool(request.content_type_hint),
-            "source_filtering": bool(request.source_filter)
-        }
+        # Compile performance stats
+        total_time_ms = int((time.time() - start_time) * 1000)
+        stats = PerformanceStats(
+            total_time_ms=total_time_ms,
+            embedding_time_ms=embedding_time_ms,
+            search_time_ms=search_time_ms,
+            generation_time_ms=generation_time_ms,
+            chunks_retrieved=len(search_results),
+            chunks_processed=len(suggestions)
+        )
 
-        logger.info(f"[{trace_id}] Successfully processed request in {total_time:.2f}ms")
+        logger.info(f"[{trace_id}] Generated {len(suggestions)} suggestions in {total_time_ms}ms")
 
         return SuggestResponse(
             trace_id=trace_id,
-            suggestions=formatted_suggestions,
-            sources=formatted_sources,
-            stats=stats,
-            search_strategy=search_strategy,
-            timestamp=time.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
+            suggestions=suggestions,
+            sources=sources,
+            stats=stats
         )
-        
-    except HTTPException:
-        raise
+
     except Exception as e:
-        logger.error(f"[{trace_id}] Error processing request: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-@router.post("/suggest/debug")
-async def debug_suggest(request: SuggestRequest):
-    """Debug endpoint that shows detailed scoring breakdown"""
-
-    trace_id = f"debug_{int(time.time() * 1000)}"
-
-    try:
-        # Get search results with full detail
-        search_results = await hybrid_search.search(
-            query=request.text,
-            context=request.context,
-            top_k=10,
-            source_filter=request.source_filter,
-            content_type_hint=request.content_type_hint
+        logger.error(f"[{trace_id}] Error generating suggestions: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=ErrorResponse(
+                error=f"Failed to generate suggestions: {str(e)}",
+                trace_id=trace_id
+            ).dict()
         )
+
+
+def _generate_suggestions_from_chunks(
+    user_text: str,
+    search_results: List[dict],
+    task: str,
+    num_suggestions: int,
+    max_length: int
+) -> List[Suggestion]:
+    """Generate suggestions based on retrieved chunks (rule-based approach)"""
+
+    if not search_results:
+        return _generate_fallback_suggestions(user_text, task, num_suggestions)
+
+    suggestions = []
+
+    # Extract relevant text segments from chunks
+    relevant_segments = []
+    for result in search_results[:5]:  # Use top 5 results
+        chunk_text = result['payload'].get('text', '')
+        if chunk_text:
+            relevant_segments.append(chunk_text)
+
+    if task == "continue":
+        suggestions = _generate_continuations(user_text, relevant_segments, num_suggestions, max_length)
+    elif task == "complete":
+        suggestions = _generate_completions(user_text, relevant_segments, num_suggestions, max_length)
+    elif task == "rephrase":
+        suggestions = _generate_rephrasings(user_text, relevant_segments, num_suggestions, max_length)
+    else:
+        suggestions = _generate_continuations(user_text, relevant_segments, num_suggestions, max_length)
+
+    return suggestions
+
+
+def _generate_continuations(user_text: str, relevant_segments: List[str], num_suggestions: int, max_length: int) -> List[Suggestion]:
+    """Generate continuation suggestions based on similar content"""
+    suggestions = []
+
+    # Look for patterns and common continuations in similar content
+    user_words = user_text.lower().split()
+    last_words = user_words[-3:] if len(user_words) >= 3 else user_words
+
+    candidates = []
+    for segment in relevant_segments:
+        words = segment.lower().split()
+
+        # Find sequences that contain similar patterns
+        for i, word in enumerate(words):
+            if word in last_words:
+                # Get the context following this word
+                following_text = ' '.join(words[i+1:i+15])  # Next 15 words
+                if following_text and len(following_text) <= max_length:
+                    candidates.append(following_text)
+
+    # Remove duplicates and score by relevance
+    unique_candidates = list(set(candidates))
+    scored_candidates = []
+
+    for candidate in unique_candidates:
+        # Simple scoring based on word overlap
+        candidate_words = set(candidate.lower().split())
+        user_word_set = set(user_words)
+        overlap = len(candidate_words.intersection(user_word_set))
+        score = min(0.9, 0.4 + (overlap * 0.1))
+        scored_candidates.append((candidate, score))
+
+    # Sort by score and take top suggestions
+    scored_candidates.sort(key=lambda x: x[1], reverse=True)
+
+    for i, (text, score) in enumerate(scored_candidates[:num_suggestions]):
+        suggestions.append(Suggestion(
+            text=text,
+            score=score,
+            reasoning=f"Based on similar content patterns in your writing"
+        ))
+
+    # Fill remaining slots with fallbacks if needed
+    while len(suggestions) < num_suggestions:
+        fallbacks = _generate_fallback_suggestions(user_text, "continue", 1)
+        if fallbacks:
+            suggestions.extend(fallbacks)
+        break
+
+    return suggestions[:num_suggestions]
+
+
+def _generate_completions(user_text: str, relevant_segments: List[str], num_suggestions: int, max_length: int) -> List[Suggestion]:
+    """Generate completion suggestions"""
+    # For completion, look for sentence endings in similar content
+    suggestions = []
+
+    # Simple completion logic
+    completions = [
+        "that aligns with your previous insights.",
+        "which builds on your established expertise.",
+        "reflecting your typical analytical approach."
+    ]
+
+    for i, completion in enumerate(completions[:num_suggestions]):
+        suggestions.append(Suggestion(
+            text=completion,
+            score=0.7 - (i * 0.1),
+            reasoning="Completion based on writing patterns"
+        ))
+
+    return suggestions
+
+
+def _generate_rephrasings(user_text: str, relevant_segments: List[str], num_suggestions: int, max_length: int) -> List[Suggestion]:
+    """Generate rephrase suggestions"""
+    suggestions = []
+
+    # Simple rephrase logic - look for alternative phrasings in similar content
+    words = user_text.split()
+
+    # Basic rephrasings
+    rephrasings = []
+
+    # Replace common words with alternatives found in user's content
+    if "and" in user_text:
+        rephrasings.append(user_text.replace(" and ", " & "))
+    if "but" in user_text:
+        rephrasings.append(user_text.replace(" but ", " however, "))
+    if "because" in user_text:
+        rephrasings.append(user_text.replace(" because ", " since "))
+
+    # If no simple replacements, use original
+    if not rephrasings:
+        rephrasings = [user_text + " (refined)"]
+
+    for i, rephrase in enumerate(rephrasings[:num_suggestions]):
+        suggestions.append(Suggestion(
+            text=rephrase,
+            score=0.6 - (i * 0.1),
+            reasoning="Rephrase based on your writing style"
+        ))
+
+    return suggestions
+
+
+def _generate_fallback_suggestions(user_text: str, task: str, num_suggestions: int) -> List[Suggestion]:
+    """Generate fallback suggestions when no relevant content is found"""
+    fallbacks = {
+        "continue": [
+            "continues with clear purpose and direction.",
+            "develops this idea further with specific examples.",
+            "builds upon this foundation naturally."
+        ],
+        "complete": [
+            "requires careful consideration and planning.",
+            "represents an important step forward.",
+            "deserves our full attention and effort."
+        ],
+        "rephrase": [
+            user_text.replace(" and ", " & "),
+            user_text.replace(" but ", " however, "),
+            user_text + " (refined)"
+        ]
+    }
+
+    suggestions = []
+    fallback_texts = fallbacks.get(task, fallbacks["continue"])
+
+    for i, text in enumerate(fallback_texts[:num_suggestions]):
+        suggestions.append(Suggestion(
+            text=text,
+            score=0.3,
+            reasoning="Fallback suggestion - no similar content found"
+        ))
+
+    return suggestions
+
+
+def _format_sources(search_results: List[dict]) -> List[Source]:
+    """Format search results as source objects"""
+    sources = []
+
+    for result in search_results:
+        payload = result.get('payload', {})
+
+        source = Source(
+            doc_id=payload.get('doc_id', 'unknown'),
+            title=payload.get('title', 'Untitled'),
+            similarity=result.get('score', 0.0),
+            chunk_text=payload.get('text', '')[:200] + "..." if len(payload.get('text', '')) > 200 else payload.get('text', ''),
+            source=payload.get('source', 'unknown')
+        )
+        sources.append(source)
+
+    return sources
+
+
+@router.get("/health", response_model=HealthResponse)
+async def health_check() -> HealthResponse:
+    """Health check endpoint with vector service status"""
+    try:
+        # Check vector services
+        vector_healthy = vector_service is not None and embedding_service is not None
         
-        # Show detailed scoring breakdown
-        debug_info = {
-            "trace_id": trace_id,
-            "query_analysis": {
-                "text_length": len(request.text),
-                "word_count": len(request.text.split()),
-                "query_specificity": "high" if len(request.text.split()) >= 5 else "medium" if len(request.text.split()) >= 2 else "low"
+        services_status = {
+            "vector_database": {
+                "status": "healthy" if vector_healthy else "unhealthy",
+                "url": os.getenv("QDRANT_URL", "http://localhost:6333"),
+                "collection": os.getenv("QDRANT_COLLECTION", "writing_samples")
             },
-            "search_results": [
-                {
-                    "doc_id": result.doc_id,
-                    "title": result.title[:50],
-                    "source": result.source,
-                    "vector_score": result.vector_score,
-                    "final_score": result.final_score,
-                    "ranking_factors": result.ranking_factors,
-                    "content_preview": result.content[:100] + "..."
-                }
-                for result in search_results[:5]
-            ],
-            "scoring_weights": hybrid_search.weights,
-            "total_results": len(search_results)
+            "embedding_service": {
+                "status": "healthy" if embedding_service else "unhealthy",
+                "model": "all-MiniLM-L6-v2"
+            }
         }
         
-        return debug_info
+        # Try to get collection info if services are healthy
+        if vector_healthy:
+            try:
+                collection_info = await vector_service.get_collection_info()
+                services_status["vector_database"]["vectors_count"] = collection_info.get("vectors_count", 0)
+                services_status["vector_database"]["points_count"] = collection_info.get("points_count", 0)
+            except Exception as e:
+                logger.warning(f"Could not get collection info: {e}")
+                services_status["vector_database"]["status"] = "degraded"
 
-    except Exception as e:
-        logger.error(f"[{trace_id}] Debug error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Debug error: {str(e)}")
+        overall_status = "healthy" if vector_healthy else "unhealthy"
 
-# Additional utility endpoints
-@router.get("/stats")
-async def get_system_stats():
-    """Get overall system statistics"""
-    try:
-        collection_info = await vector_service.get_collection_info()
+        return HealthResponse(
+            status=overall_status,
+            services=services_status
+        )
         
-        return {
-            "collection_stats": collection_info,
-            "embedding_model": "all-MiniLM-L6-v2",
-            "vector_dimension": 384,
-            "search_features": [
-                "hybrid_search",
-                "temporal_scoring",
-                "source_diversification",
-                "context_aware_ranking",
-                "exact_match_boosting"
-            ]
-        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Stats error: {str(e)}")
-
-@router.post("/suggest/batch")
-async def batch_suggest(requests: List[SuggestRequest]):
-    """Process multiple suggestion requests in batch"""
-    if len(requests) > 10:
-        raise HTTPException(status_code=400, detail="Maximum 10 requests per batch")
-
-    results = []
-    for i, request in enumerate(requests):
-        try:
-            result = await suggest_text(request)
-            result.trace_id = f"batch_{int(time.time() * 1000)}_{i}"
-            results.append(result)
-        except Exception as e:
-            results.append({
-                "trace_id": f"batch_error_{i}",
-                "error": str(e),
-                "request_index": i
-            })
-
-    return {"batch_results": results}
+        logger.error(f"Health check failed: {str(e)}")
+        return HealthResponse(
+            status="unhealthy",
+            services={
+                "error": str(e)
+            }
+        )
