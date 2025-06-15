@@ -42,19 +42,25 @@ class DocumentProcessor:
                 logger.warning(f"Empty content for document {doc_id}")
                 return []
             
-            # Get document metadata
+            # Get document metadata - FIXED: Use source from document instead of hardcoded
+            source = document.get("source", "notion")  # Default to notion for backward compatibility
+
             metadata = {
                 "doc_id": doc_id,
                 "title": title,
                 "created_time": document.get("created_time"),
                 "last_edited_time": document.get("last_edited_time"),
-                "source": "notion"
+                "source": source  # Now uses dynamic source from document
             }
             
             # Process tags if available
             if "tags" in document and document["tags"]:
                 metadata["tags"] = document["tags"]
                 
+            # Add source-specific metadata if available
+            if "gmail_metadata" in document:
+                metadata["gmail_metadata"] = document["gmail_metadata"]
+
             # Create chunks
             chunks = self._create_chunks(content)
             
@@ -73,7 +79,7 @@ class DocumentProcessor:
                 }
                 processed_chunks.append(chunk_data)
             
-            logger.info(f"Processed document {doc_id} into {len(processed_chunks)} chunks")
+            logger.info(f"Processed document {doc_id} into {len(processed_chunks)} chunks with source: {source}")
             return processed_chunks
         
         except Exception as e:

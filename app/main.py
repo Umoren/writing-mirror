@@ -53,6 +53,7 @@ async def root():
             "endpoints": {
                 "suggest": "/api/suggest",
                 "health": "/health",
+                "api_health": "/api/health",
                 "status": "/api/status"
             }
         }
@@ -67,7 +68,7 @@ async def health_check():
         "timestamp": datetime.utcnow().isoformat()
     }
 
-# API status endpoint
+# API status endpoint - UPDATED to reflect current architecture
 @app.get("/api/status", tags=["api"])
 async def api_status():
     """API status endpoint with more details"""
@@ -78,7 +79,8 @@ async def api_status():
         "services": {
             "suggest_api": "available",
             "vector_search": "available",
-            "llm_generation": "available"
+            "embedding_service": "available",
+            "vector_database": "available"
         }
     }
 
