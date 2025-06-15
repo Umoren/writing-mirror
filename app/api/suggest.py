@@ -1,82 +1,49 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException
 from typing import List
 import time
 import logging
 import os
 from datetime import datetime
 from dotenv import load_dotenv
-from ..services.embedding_service import EmbeddingService
-from ..services.vector_service import VectorService
-from ..services.integration_service import IntegrationService
-from ..services.llm_service import LLMService
 
+# Load environment variables
+load_dotenv()
 
 from ..models.api_models import (
     SuggestRequest, 
     SuggestResponse, 
     Suggestion, 
-    Source, 
     PerformanceStats,
     HealthResponse,
     ErrorResponse
 )
-
-
-# Load environment variables
-load_dotenv()
-
+from ..services.llm_service import LLMService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Initialize services
-embedding_service = EmbeddingService()
-vector_service = VectorService()
-integration_service = IntegrationService()
+# Initialize only the LLM service for now
 llm_service = LLMService()
 
 
 @router.post("/suggest", response_model=SuggestResponse)
 async def suggest(request: SuggestRequest) -> SuggestResponse:
-    """Generate writing suggestions based on user input"""
+    """Generate writing suggestions based on user input - SIMPLIFIED VERSION"""
     start_time = time.time()
     trace_id = f"suggest_{int(time.time() * 1000)}"
     
     try:
         logger.info(f"[{trace_id}] Processing suggestion request: {request.text[:50]}...")
         
-        # Step 1: Generate embedding for the query
-        embedding_start = time.time()
-        query_embedding = embedding_service.embed_text(request.text)
-        embedding_time_ms = int((time.time() - embedding_start) * 1000)
+        # For now, we'll generate suggestions without vector search
+        # Using dummy retrieved chunks until vector service is set up
+        retrieved_chunks = [
+            "This is a sample writing piece that shows good style.",
+            "Another example of clear, engaging writing.",
+            "Professional writing should be concise and clear."
+        ]
         
-        # Step 2: Search for similar content
-        search_start = time.time()
-        search_results = vector_service.search(
-            query_vector=query_embedding,
-            top_k=min(10, request.num_suggestions * 3),  # Get more results for better context
-            score_threshold=0.2
-        )
-        search_time_ms = int((time.time() - search_start) * 1000)
-        
-        # Step 3: Extract text chunks for LLM context
-        retrieved_chunks = []
-        sources = []
-        
-        for result in search_results:
-            payload = result.get('payload', {})
-            chunk_text = payload.get('text', '')
-            if chunk_text:
-                retrieved_chunks.append(chunk_text)
-                
-                sources.append(Source(
-                    doc_id=payload.get('doc_id', 'unknown'),
-                    title=payload.get('doc_title', 'Unknown Document'),
-                    similarity=result.get('score', 0),
-                    chunk_text=chunk_text[:200] + "..." if len(chunk_text) > 200 else chunk_text
-                ))
-        
-        # Step 4: Generate suggestions using LLM
+        # Generate suggestions using LLM
         generation_start = time.time()
         llm_suggestions = await llm_service.generate_suggestions(
             user_text=request.text,
@@ -88,7 +55,7 @@ async def suggest(request: SuggestRequest) -> SuggestResponse:
         )
         generation_time_ms = int((time.time() - generation_start) * 1000)
         
-        # Step 5: Convert LLM suggestions to API format
+        # Convert LLM suggestions to API format
         suggestions = []
         for llm_suggestion in llm_suggestions:
             suggestions.append(Suggestion(
@@ -97,14 +64,14 @@ async def suggest(request: SuggestRequest) -> SuggestResponse:
                 reasoning=llm_suggestion['reasoning']
             ))
         
-        # Step 6: Compile performance stats
+        # Compile performance stats
         total_time_ms = int((time.time() - start_time) * 1000)
         stats = PerformanceStats(
             total_time_ms=total_time_ms,
-            embedding_time_ms=embedding_time_ms,
-            search_time_ms=search_time_ms,
+            embedding_time_ms=0,  # No embedding for now
+            search_time_ms=0,     # No search for now
             generation_time_ms=generation_time_ms,
-            chunks_retrieved=len(search_results),
+            chunks_retrieved=len(retrieved_chunks),
             chunks_processed=len(suggestions)
         )
         
@@ -113,7 +80,7 @@ async def suggest(request: SuggestRequest) -> SuggestResponse:
         return SuggestResponse(
             trace_id=trace_id,
             suggestions=suggestions,
-            sources=sources[:len(suggestions)],  # Match sources to suggestions
+            sources=[],  # No sources for now
             stats=stats
         )
         
@@ -130,37 +97,29 @@ async def suggest(request: SuggestRequest) -> SuggestResponse:
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
-    """Health check endpoint"""
+    """Health check endpoint - SIMPLIFIED VERSION"""
     try:
-        # Check vector service
-        vector_status = vector_service.get_collection_info()
-        vector_healthy = vector_status.get('status') == 'green'
-        
-        # Check embedding service
-        test_embedding = embedding_service.embed_text("test")
-        embedding_healthy = len(test_embedding) > 0
-        
         # Check LLM service (simple test)
         llm_healthy = bool(llm_service.api_key and llm_service.model_name)
         
         # Overall status
-        overall_status = "healthy" if vector_healthy and embedding_healthy and llm_healthy else "unhealthy"
+        overall_status = "healthy" if llm_healthy else "unhealthy"
         
         return HealthResponse(
             status=overall_status,
             services={
-                "vector_database": {
-                    "status": "healthy" if vector_healthy else "unhealthy",
-                    "details": vector_status
-                },
-                "embedding_service": {
-                    "status": "healthy" if embedding_healthy else "unhealthy",
-                    "model": os.getenv("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
-                },
                 "llm_service": {
                     "status": "healthy" if llm_healthy else "unhealthy",
                     "model": os.getenv("MODEL_NAME", "mistralai/Mistral-7B-Instruct-v0.3"),
                     "provider": "Together AI"
+                },
+                "vector_database": {
+                    "status": "disabled",
+                    "details": "Vector service temporarily disabled for initial setup"
+                },
+                "embedding_service": {
+                    "status": "disabled",
+                    "details": "Embedding service temporarily disabled for initial setup"
                 }
             }
         )
