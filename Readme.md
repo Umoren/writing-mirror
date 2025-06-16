@@ -8,6 +8,14 @@ The core challenge lies in the heterogeneity problem: emails contain temporal co
 
 Consider the difference between searching for "authentication implementation" in a traditional system versus a context engine. Traditional search returns documents containing those words. A context engine returns the email thread where you discussed OAuth2 integration challenges, the Notion page documenting your API design decisions, and the code snippet from a colleague's implementation—all ranked by contextual relevance to your current project.
 
+## Some results from this research
+
+![carbon (6).png](https://i.imgur.com/y8U6ofO.jpeg)
+
+![screencapture-localhost-3000-2025-06-16-11_03_49.png](https://i.imgur.com/cdQMKVt.png)
+
+![screencapture-localhost-3000-2025-06-16-11_04_45.png](https://i.imgur.com/iaCiR7l.png)
+
 ## Architecture Overview
 
 The system operates as a multi-stage pipeline that transforms raw information into contextually-aware search results. The architecture consists of five primary components:
